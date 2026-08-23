@@ -319,7 +319,7 @@ jobs:
               *)            SIZE_MB="1.0" ;;
             esac
 
-            jq -n \
+            jq \
               --arg name "$MODULE" \
               --arg latest "$VER" \
               --arg desc "$DESC" \
