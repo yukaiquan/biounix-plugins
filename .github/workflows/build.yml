@@ -1,0 +1,359 @@
+name: Build and Release Rust Modules
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'scripts/build.js'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: '要编译的模块（逗号分隔，留空=全部）'
+        required: false
+        default: ''
+      version:
+        description: '版本号（留空则从 Cargo.toml 读取）'
+        required: false
+        default: ''
+      force_release:
+        description: '是否强制重新发布 release（即使已存在）'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: write
+
+jobs:
+  # --- 任务 1: 读取模块清单和版本，构建矩阵 ---
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.set-matrix.outputs.build_matrix }}
+      release_matrix: ${{ steps.set-matrix.outputs.release_matrix }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Compute matrices
+        id: set-matrix
+        run: |
+          # 确定要编译的模块列表
+          if [[ -n "${{ inputs.modules }}" ]]; then
+            MODULES=$(echo '${{ inputs.modules }}' | tr ',' ' ')
+          else
+            MODULES='biounix-core biounix-io biounix-svg'
+          fi
+
+          # build_matrix: 模块 × 平台
+          BUILD_INCLUDE='[]'
+          RELEASE_INCLUDE='[]'
+          for MOD in $MODULES; do
+            # 从 Cargo.toml 读版本号
+            if [[ -n "${{ inputs.version }}" ]]; then
+              VER="${{ inputs.version }}"
+            else
+              VER=$(grep '^version' "crates/$MOD/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            fi
+            if [[ -z "$VER" ]]; then
+              echo "::error::无法读取 $MOD 的版本号"
+              exit 1
+            fi
+            echo "[$MOD] version=$VER"
+
+            # 4 个平台组合: platform arch runner target_triple
+            PLATFORMS=(
+              "darwin arm64 macos-14 aarch64-apple-darwin"
+              "darwin x64 macos-13 x86_64-apple-darwin"
+              "linux x64 ubuntu-latest x86_64-unknown-linux-gnu"
+              "win32 x64 windows-latest x86_64-pc-windows-msvc"
+            )
+            for P in "${PLATFORMS[@]}"; do
+              read -r PLAT ARCH RUNNER TRIPLE <<< "$P"
+              BUILD_INCLUDE=$(echo "$BUILD_INCLUDE" | jq -c \
+                --arg mod "$MOD" --arg ver "$VER" --arg plat "$PLAT" --arg arch "$ARCH" \
+                --arg runner "$RUNNER" --arg triple "$TRIPLE" \
+                '. += [{module: $mod, version: $ver, platform: $plat, arch: $arch, runner: $runner, target_triple: $triple}]')
+            done
+
+            # release_matrix: 每个模块一项
+            RELEASE_INCLUDE=$(echo "$RELEASE_INCLUDE" | jq -c \
+              --arg mod "$MOD" --arg ver "$VER" \
+              '. += [{module: $mod, version: $ver}]')
+          done
+
+          echo "build_matrix=$(echo "$BUILD_INCLUDE" | jq -c '{include: .}')" >> $GITHUB_OUTPUT
+          echo "release_matrix=$(echo "$RELEASE_INCLUDE" | jq -c '{include: .}')" >> $GITHUB_OUTPUT
+
+          echo "::group::build 矩阵"
+          echo "$BUILD_INCLUDE" | jq .
+          echo "::endgroup::"
+          echo "::group::release 矩阵"
+          echo "$RELEASE_INCLUDE" | jq .
+          echo "::endgroup::"
+
+  # --- 任务 2: 跨平台编译 ---
+  build:
+    needs: setup
+    name: ${{ matrix.module }} · ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.build_matrix) }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target_triple }}
+
+      - name: Build module
+        working-directory: crates/${{ matrix.module }}
+        shell: bash
+        run: |
+          # .node 文件名：与 BioUnix registry.getNativeFileName 一致
+          NODE_FILE="${{ matrix.module }}.${{ matrix.platform }}-${{ matrix.arch }}.node"
+          echo "Building $NODE_FILE"
+
+          cargo build --release --target ${{ matrix.target_triple }}
+
+          # 定位构建产物（Rust lib 名：连字符→下划线）
+          case "${{ matrix.platform }}" in
+            darwin) LIB_NAME="lib$(echo ${{ matrix.module }} | tr '-' '_').dylib" ;;
+            linux)  LIB_NAME="lib$(echo ${{ matrix.module }} | tr '-' '_').so" ;;
+            win32)  LIB_NAME="$(echo ${{ matrix.module }} | tr '-' '_').dll" ;;
+          esac
+          LIB_PATH="target/${{ matrix.target_triple }}/release/$LIB_NAME"
+
+          if [[ ! -f "$LIB_PATH" ]]; then
+            echo "::error::构建产物未找到: $LIB_PATH"
+            ls -la target/${{ matrix.target_triple }}/release/ | head -20
+            exit 1
+          fi
+
+          cp "$LIB_PATH" "$NODE_FILE"
+          echo "Produced: $NODE_FILE ($(du -h "$NODE_FILE" | cut -f1))"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.module }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: crates/${{ matrix.module }}/${{ matrix.module }}.${{ matrix.platform }}-${{ matrix.arch }}.node
+          retention-days: 7
+          if-no-files-found: error
+
+  # --- 任务 3: 汇总各平台产物，生成 manifest 并发布 release ---
+  release:
+    needs: [setup, build]
+    name: Release ${{ matrix.module }} v${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.release_matrix) }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download all platform artifacts for ${{ matrix.module }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: node-${{ matrix.module }}-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Verify artifacts present
+        run: |
+          echo "=== 下载的 .node 文件 ==="
+          find artifacts -name "*.node" -exec ls -lh {} \;
+          COUNT=$(find artifacts -name "*.node" | wc -l)
+          if [[ "$COUNT" -lt 4 ]]; then
+            echo "::warning::只下载到 $COUNT/4 个 .node 文件，仍会发布可用的平台"
+          fi
+
+      - name: Compute SHA-256 and generate manifest
+        id: manifest
+        run: |
+          MODULE="${{ matrix.module }}"
+          VER="${{ matrix.version }}"
+          REPO="${{ github.repository }}"
+
+          # 为每个 .node 计算 sha256，构造 platforms JSON
+          PLATFORMS_JSON='{}'
+          for NODE_FILE in artifacts/*.node; do
+            BASENAME=$(basename "$NODE_FILE")
+            # <module>.<platform>-<arch>.node
+            PLAT_ARCH=$(echo "$BASENAME" | sed "s/^${MODULE}\.//; s/\.node$//")
+            PLAT=$(echo "$PLAT_ARCH" | cut -d'-' -f1)
+            ARCH=$(echo "$PLAT_ARCH" | cut -d'-' -f2)
+            SHA=$(shasum -a 256 "$NODE_FILE" | cut -d' ' -f1)
+
+            TAG="${MODULE}-v${VER}"
+            ASSET_URL="https://github.com/${REPO}/releases/download/${TAG}/${BASENAME}"
+
+            PLATFORMS_JSON=$(echo "$PLATFORMS_JSON" | jq -c \
+              --arg key "${PLAT}-${ARCH}" \
+              --arg url "$ASSET_URL" \
+              --arg sha "$SHA" \
+              '.[$key] = {url: $url, sha256: $sha}')
+            echo "  $PLAT-$ARCH: sha256=$SHA"
+          done
+
+          # 生成 manifest（与 BioUnix ModuleManifest 接口对齐）
+          DESC=$(grep '^description' "crates/${MODULE}/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
+          CATEGORY=$(echo "$MODULE" | sed 's/biounix-//')
+
+          jq -n \
+            --arg name "$MODULE" \
+            --arg version "$VER" \
+            --arg desc "$DESC" \
+            --arg category "$CATEGORY" \
+            --argjson platforms "$PLATFORMS_JSON" \
+            '{
+              name: $name,
+              version: $version,
+              description: $desc,
+              category: $category,
+              builtin: false,
+              napi_version: 8,
+              platforms: $platforms
+            }' > "manifest-${VER}.json"
+
+          echo "=== manifest-${VER}.json ==="
+          cat "manifest-${VER}.json"
+
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MODULE="${{ matrix.module }}"
+          VER="${{ matrix.version }}"
+          TAG="${MODULE}-v${VER}"
+          FORCE="${{ inputs.force_release || 'false' }}"
+
+          # 检查 release 是否已存在
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在"
+            if [[ "$FORCE" == "true" ]]; then
+              echo "强制重新发布，先删除旧 release"
+              gh release delete "$TAG" --yes --cleanup-tag
+            else
+              echo "跳过（force_release=false）。如需重新发布，设置 force_release=true"
+              exit 0
+            fi
+          fi
+
+          gh release create "$TAG" \
+            --title "${MODULE} v${VER}" \
+            --notes "Auto-release for ${MODULE} v${VER}
+
+          Built from commit ${{ github.sha }}.
+          Each platform .node file has a SHA-256 recorded in manifest-${VER}.json." \
+            --target ${{ github.ref_name }}
+
+          # 上传 .node 文件
+          for NODE_FILE in artifacts/*.node; do
+            echo "上传: $(basename "$NODE_FILE")"
+            gh release upload "$TAG" "$NODE_FILE" --clobber
+          done
+
+          # 上传 manifest
+          gh release upload "$TAG" "manifest-${VER}.json" --clobber
+
+          echo "=== Release $TAG 发布完成 ==="
+          gh release view "$TAG" --json assets --jq '.assets[].name'
+
+      - name: Upload manifest artifact for index update
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ matrix.module }}-${{ matrix.version }}
+          path: manifest-${{ matrix.version }}.json
+          retention-days: 30
+
+  # --- 任务 4: 更新 modules-index.json ---
+  update-index:
+    needs: [setup, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Regenerate modules-index.json
+        run: |
+          REPO="${{ github.repository }}"
+
+          # 从 Cargo.toml 重新生成（与 release 的模块版本一致）
+          jq -n '{modules: []}' > modules-index.json
+
+          for MODULE_DIR in crates/biounix-*; do
+            MODULE=$(basename "$MODULE_DIR")
+            VER=$(grep '^version' "$MODULE_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            DESC=$(grep '^description' "$MODULE_DIR/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
+            CATEGORY=$(echo "$MODULE" | sed 's/biounix-//')
+
+            if [[ "$MODULE" == "biounix-core" || "$MODULE" == "biounix-io" ]]; then
+              BUILTIN="true"
+            else
+              BUILTIN="false"
+            fi
+
+            TAG="${MODULE}-v${VER}"
+            RELEASE_URL="https://github.com/${REPO}/releases/tag/${TAG}"
+            MANIFEST_URL="https://github.com/${REPO}/releases/download/${TAG}/manifest-${VER}.json"
+
+            # 近似大小（实际以 release asset 为准）
+            case "$MODULE" in
+              biounix-core) SIZE_MB="0.6" ;;
+              biounix-io)   SIZE_MB="1.1" ;;
+              biounix-svg)  SIZE_MB="3.5" ;;
+              *)            SIZE_MB="1.0" ;;
+            esac
+
+            jq -n \
+              --arg name "$MODULE" \
+              --arg latest "$VER" \
+              --arg desc "$DESC" \
+              --arg cat "$CATEGORY" \
+              --argjson builtin "$BUILTIN" \
+              --argjson size "$SIZE_MB" \
+              --arg rel "$RELEASE_URL" \
+              --arg man "$MANIFEST_URL" \
+              '.modules += [{
+                name: $name,
+                latest: $latest,
+                description: $desc,
+                category: $cat,
+                builtin: $builtin,
+                size_mb: $size,
+                release_url: $rel,
+                manifest_url: $man
+              }]' modules-index.json > tmp.json && mv tmp.json modules-index.json
+          done
+
+          echo "=== 更新后的 modules-index.json ==="
+          cat modules-index.json
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet modules-index.json; then
+            echo "modules-index.json 无变化，跳过提交"
+          else
+            git add modules-index.json
+            git commit -m "chore: update modules-index.json [skip ci]
+
+          Auto-generated by GitHub Actions after release.
+          Commit: ${{ github.sha }}"
+            git push
+            echo "已提交 modules-index.json 更新"
+          fi

@@ -1,0 +1,22 @@
+[package]
+name = "biounix-core"
+version = "0.1.0"
+edition = "2021"
+description = "BioUnix 核心纯计算模块（序列分析 + ML 向量运算，Rust + napi-rs）"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1

@@ -1,0 +1,12 @@
+# Rust 构建产物
+target/
+**/*.node
+
+# 临时文件
+*.tmp
+*.log
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
