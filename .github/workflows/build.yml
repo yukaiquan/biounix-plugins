@@ -4,25 +4,25 @@ on:
   push:
     branches: [main]
     paths:
-      - 'crates/**'
-      - 'scripts/build.js'
-      - '.github/workflows/build.yml'
+      - "crates/**"
+      - "scripts/build.js"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
       modules:
-        description: '要编译的模块（逗号分隔，留空=全部）'
+        description: "要编译的模块（逗号分隔，留空=全部）"
         required: false
-        default: ''
+        default: ""
       version:
-        description: '版本号（留空则从 Cargo.toml 读取）'
+        description: "版本号（留空则从 Cargo.toml 读取）"
         required: false
-        default: ''
+        default: ""
       force_release:
-        description: '是否强制重新发布 release（即使已存在）'
+        description: "是否强制重新发布 release（即使已存在）"
         required: false
-        default: 'false'
+        default: "false"
         type: choice
-        options: ['false', 'true']
+        options: ["false", "true"]
 
 permissions:
   contents: write
