@@ -3,7 +3,7 @@
     {
       "name": "biounix-core",
       "latest": "0.1.0",
-      "description": "BioUnix 核心纯计算模块（序列分析 + TF-IDF/Embedding + Token 估算）",
+      "description": "BioUnix 核心纯计算模块（序列分析 + ML 向量运算，Rust + napi-rs）",
       "category": "core",
       "builtin": true,
       "size_mb": 0.6,
@@ -13,7 +13,7 @@
     {
       "name": "biounix-io",
       "latest": "0.1.0",
-      "description": "BioUnix 文件 I/O 模块（FASTA/FASTQ/BAM/VCF/BCF/GFF/BED 解析统计）",
+      "description": "BioUnix 文件 I/O 模块（FASTA/FASTQ/BAM/VCF/BCF/GFF/BED 解析统计，Rust + napi-rs）",
       "category": "io",
       "builtin": true,
       "size_mb": 1.1,
@@ -23,8 +23,8 @@
     {
       "name": "biounix-svg",
       "latest": "0.1.0",
-      "description": "BioUnix SVG → 光栅图像转换引擎（resvg + tiny-skia + ab_glyph）",
-      "category": "viz",
+      "description": "BioUnix SVG → 光栅图像转换模块（Rust + napi-rs）",
+      "category": "svg",
       "builtin": false,
       "size_mb": 3.5,
       "release_url": "https://github.com/yukaiquan/biounix-plugins/releases/tag/biounix-svg-v0.1.0",
