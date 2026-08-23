@@ -65,9 +65,11 @@ jobs:
             echo "[$MOD] version=$VER"
 
             # 4 个平台组合: platform arch runner target_triple
+            # macos-15 = arm64 (Apple Silicon)，macos-15-intel = x64（比 macos-13 资源更充足）
+            # 参考 https://docs.github.com/en/actions/reference/runners/github-hosted-runners
             PLATFORMS=(
-              "darwin arm64 macos-14 aarch64-apple-darwin"
-              "darwin x64 macos-13 x86_64-apple-darwin"
+              "darwin arm64 macos-15 aarch64-apple-darwin"
+              "darwin x64 macos-15-intel x86_64-apple-darwin"
               "linux x64 ubuntu-latest x86_64-unknown-linux-gnu"
               "win32 x64 windows-latest x86_64-pc-windows-msvc"
             )
