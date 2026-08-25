@@ -29,6 +29,16 @@
       "size_mb": 3.5,
       "release_url": "https://github.com/yukaiquan/biounix-plugins/releases/tag/biounix-svg-v0.1.0",
       "manifest_url": "https://github.com/yukaiquan/biounix-plugins/releases/download/biounix-svg-v0.1.0/manifest-0.1.0.json"
+    },
+    {
+      "name": "biounix-vector",
+      "latest": "0.1.0",
+      "description": "BioUnix 向量数据库模块（LanceDB + arrow-rs，IVF-PQ/HNSW ANN 检索，每库独立目录 + LRU 连接池 + 路径分片）",
+      "category": "vector",
+      "builtin": false,
+      "size_mb": 8.0,
+      "release_url": "https://github.com/yukaiquan/biounix-plugins/releases/tag/biounix-vector-v0.1.0",
+      "manifest_url": "https://github.com/yukaiquan/biounix-plugins/releases/download/biounix-vector-v0.1.0/manifest-0.1.0.json"
     }
   ]
 }

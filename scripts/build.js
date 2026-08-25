@@ -16,7 +16,7 @@ const path = require('node:path');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const CRATES_DIR = path.join(REPO_ROOT, 'crates');
-const ALL_MODULES = ['biounix-core', 'biounix-io', 'biounix-svg'];
+const ALL_MODULES = ['biounix-core', 'biounix-io', 'biounix-svg', 'biounix-vector'];
 
 // target triple → (platformName, arch, libExt, libPrefix)
 // platformName/arch 必须与 process.platform/process.arch 一致，用于 .node 命名
