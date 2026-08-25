@@ -54,9 +54,17 @@ jobs:
             if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
               BEFORE=$(git rev-parse HEAD~1)
             fi
-            CHANGED=$(git diff --name-only "$BEFORE" ${{ github.sha }} -- crates/ | sed 's|crates/\([^/]*\)/.*|\1|' | sort -u)
-            MODULES=$(echo "$CHANGED" | tr '\n' ' ')
-            echo "检测到变动的模块: $MODULES"
+            CRATE_CHANGED=$(git diff --name-only "$BEFORE" ${{ github.sha }} -- crates/ | sed 's|crates/\([^/]*\)/.*|\1|' | sort -u)
+            WF_CHANGED=$(git diff --name-only "$BEFORE" ${{ github.sha }} -- .github/workflows/ scripts/build.js | wc -l | tr -d ' ')
+            if [[ -n "$CRATE_CHANGED" ]]; then
+              MODULES=$(echo "$CRATE_CHANGED" | tr '\n' ' ')
+            elif [[ "$WF_CHANGED" -gt 0 ]]; then
+              # 仅 workflow/构建脚本变动：重新编译全部模块（如 CI 修复）
+              MODULES='biounix-core biounix-io biounix-svg biounix-vector'
+            else
+              MODULES=''
+            fi
+            echo "检测到变动的模块: '$MODULES' (workflow 变动文件数: $WF_CHANGED)"
           else
             # 其他情况（不应到达）：默认全部
             MODULES='biounix-core biounix-io biounix-svg biounix-vector'
@@ -121,6 +129,7 @@ jobs:
   # --- 任务 2: 跨平台编译 ---
   build:
     needs: setup
+    if: fromJson(needs.setup.outputs.build_matrix).include[0] != null
     name: ${{ matrix.module }} · ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -192,6 +201,7 @@ jobs:
   # --- 任务 3: 汇总各平台产物，生成 manifest 并发布 release ---
   release:
     needs: [setup, build]
+    if: always() && fromJson(needs.setup.outputs.release_matrix).include[0] != null
     name: Release ${{ matrix.module }} v${{ matrix.version }}
     runs-on: ubuntu-latest
     strategy:
