@@ -136,6 +136,24 @@ jobs:
         with:
           targets: ${{ matrix.target_triple }}
 
+      - name: Install protoc (LanceDB 的 prost-build 依赖)
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            darwin) brew install protobuf ;;
+            linux)  sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler ;;
+            win32)
+              # Windows: 下载 protoc 预编译二进制
+              PROTOC_VER=27.5
+              curl -sSL -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VER}/protoc-${PROTOC_VER}-win64.zip"
+              mkdir -p "$RUNNER_TEMP/protoc"
+              unzip -q /tmp/protoc.zip -d "$RUNNER_TEMP/protoc"
+              echo "PROTOC=$RUNNER_TEMP/protoc/bin/protoc.exe" >> "$GITHUB_ENV"
+              echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+              ;;
+          esac
+          protoc --version || echo "protoc 验证跳过"
+
       - name: Build module
         working-directory: crates/${{ matrix.module }}
         shell: bash
